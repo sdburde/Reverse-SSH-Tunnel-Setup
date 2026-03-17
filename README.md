@@ -1,4 +1,4 @@
-# 🌐 Reverse SSH Tunnel Setup (Raspberry Pi → VPS)
+# 🌐 Reverse SSH Tunnel Setup (Raspberry Pi → VPS) — **Final Polished Version**
 
 ## 🎯 Goal
 
@@ -13,15 +13,15 @@ Client → VPS (public_ip:PORT) → Raspberry Pi (ssh:22)
 # 🧱 Prerequisites
 
 * Public VPS (Linux, SSH enabled)
-* Raspberry Pi (inside private network)
+* Raspberry Pi (private network)
 * SSH access on both systems
-* UFW or firewall enabled on VPS
+* Firewall (UFW or similar) on VPS
 
 ---
 
 # 🛠️ STEP 1 — VPS Configuration
 
-## 1.1 Create dedicated SSH key (for tunnel only)
+## 1.1 Create dedicated SSH key (tunnel-only)
 
 ```bash
 mkdir -p ~/.ssh/tunnel_keys
@@ -30,7 +30,7 @@ ssh-keygen -t ed25519 -f ~/.ssh/tunnel_keys/pi_tunnel -N "" -C "reverse tunnel k
 
 ---
 
-## 1.2 Restrict key permissions
+## 1.2 Restrict key (🔥 IMPORTANT HARDENING)
 
 Edit:
 
@@ -38,47 +38,23 @@ Edit:
 nano ~/.ssh/authorized_keys
 ```
 
-Add (single line):
+Add:
 
 ```bash
 no-agent-forwarding,no-X11-forwarding,no-pty,permitopen="localhost:22" ssh-ed25519 AAAA... reverse tunnel key
 ```
 
-👉 Replace `AAAA...` with your `.pub` key
+👉 Replace `AAAA...`
 
-### 🔐 What this enforces:
+### 🔐 What this does:
 
-* No shell access
-* No interactive login
-* Only allows forwarding → localhost:22
-
----
-
-## 1.3 Allow external port
-
-### 📌 Port Guidelines (important)
-
-* You can use **any free TCP port**
-* Recommended range: **20000–65000**
-* Avoid common ports: `22, 80, 443, 8080`
-* Example choices:
-
-  * `5522` (your current one ✔)
-  * `22222`
-  * `49222` (better random)
-
-👉 Make sure:
-
-* Same port is used in **ALL steps below**
-* Port is not already in use (`ss -tlnp`)
-
-```bash
-sudo ufw allow 5522/tcp
-```
+* ❌ No shell access
+* ❌ No interactive login
+* ✅ Only allows port forwarding → `localhost:22`
 
 ---
 
-## 1.4 Enable reverse tunnel public binding
+## ⚠️ OPTIONAL (only if using `*:` or `0.0.0.0:`)
 
 Edit:
 
@@ -90,9 +66,10 @@ Add:
 
 ```bash
 GatewayPorts clientspecified
+AllowTcpForwarding yes
 ```
 
-Restart:
+Then:
 
 ```bash
 sudo systemctl restart ssh
@@ -100,16 +77,24 @@ sudo systemctl restart ssh
 
 ---
 
+## 1.3 Allow port on firewall
+
+```bash
+sudo ufw allow 5522/tcp
+```
+
+---
+
 # 🍓 STEP 2 — Raspberry Pi Configuration
 
-## 2.1 Copy private key from VPS
+## 2.1 Copy private key
 
 ```bash
 scp user@<VPS_IP>:~/.ssh/tunnel_keys/pi_tunnel ~/.ssh/
 chmod 600 ~/.ssh/pi_tunnel
 ```
 
-⚠️ Delete it from VPS after copying:
+⚠️ Remove from VPS:
 
 ```bash
 rm ~/.ssh/tunnel_keys/pi_tunnel
@@ -117,10 +102,10 @@ rm ~/.ssh/tunnel_keys/pi_tunnel
 
 ---
 
-## 2.2 Test reverse tunnel manually
+## 2.2 Test tunnel manually (FIRST TRUTH TEST)
 
 ```bash
-ssh -i ~/.ssh/pi_tunnel -N -R *:5522:localhost:22 user@<VPS_IP>
+ssh -i ~/.ssh/pi_tunnel -N -R 5522:localhost:22 user@<VPS_IP>
 ```
 
 ---
@@ -134,14 +119,30 @@ ss -tlnp | grep 5522
 Expected:
 
 ```
-0.0.0.0:5522
+127.0.0.1:5522
 ```
 
 ---
 
 # 🚀 STEP 3 — Access Raspberry Pi
 
-From any external machine:
+From VPS:
+
+```bash
+ssh -p 5522 pi_user@localhost
+```
+
+---
+
+## 🌍 External Access (optional)
+
+If you want public access:
+
+```bash
+ssh -i ~/.ssh/pi_tunnel -N -R 0.0.0.0:5522:localhost:22 user@<VPS_IP>
+```
+
+Then:
 
 ```bash
 ssh -p 5522 pi_user@<VPS_IP>
@@ -149,16 +150,9 @@ ssh -p 5522 pi_user@<VPS_IP>
 
 ---
 
-# 🔄 STEP 4 — Persistent Tunnel (autossh) on the Raspberry Pi 🍓
+# 🔄 STEP 4 — Persistent Tunnel (autossh)
 
-## 📌 Important
-
-* This step runs **ONLY on Raspberry Pi**
-* Do NOT run on VPS
-
----
-
-## 4.1 Install autossh
+## 4.1 Install
 
 ```bash
 sudo apt update
@@ -167,30 +161,24 @@ sudo apt install autossh -y
 
 ---
 
-## 4.2 Create systemd service
+## 4.2 Create systemd service (🔥 FIXED VERSION)
 
 ```bash
 sudo nano /etc/systemd/system/reverse-tunnel.service
 ```
 
-Paste:
-
 ```ini
 [Unit]
 Description=Persistent Reverse SSH Tunnel
-After=network.target
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 User=pi_user
-ExecStart=/usr/bin/autossh -M 0 -N \
-  -o "ServerAliveInterval 30" \
-  -o "ServerAliveCountMax 3" \
-  -i /home/pi_user/.ssh/pi_tunnel \
-  -R *:5522:localhost:22 \
-  user@<VPS_IP>
-
+Environment="AUTOSSH_GATETIME=0"
+ExecStart=/usr/bin/autossh -M 0 -N -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o ExitOnForwardFailure=yes -i /home/pi_user/.ssh/pi_tunnel -R 5522:localhost:22 user@<VPS_IP>
 Restart=always
-RestartSec=10
+RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
@@ -198,54 +186,48 @@ WantedBy=multi-user.target
 
 ---
 
-## 4.3 Enable and start
+## 🔥 Why this version matters
+
+* ❌ Removed broken multiline (`\`)
+* ✅ Reliable reconnect behavior
+* ✅ Fails fast if tunnel not created
+* ✅ Works with systemd properly
+
+---
+
+## 4.3 Enable
 
 ```bash
 sudo systemctl daemon-reload
 sudo systemctl enable reverse-tunnel
-sudo systemctl start reverse-tunnel
+sudo systemctl restart reverse-tunnel
 ```
 
 ---
 
-# 🔐 STEP 5 — Fail2Ban (Intrusion Protection)
-
-## 🧠 What is Fail2Ban?
-
-Fail2Ban is like a silent firewall guard:
-
-* Monitors login attempts
-* Detects brute-force attacks
-* Blocks attacker IP automatically
-
----
-
-## ⚙️ How it works
-
-1. Reads logs (e.g., `/var/log/auth.log`)
-2. Detects repeated failures
-3. Blocks IP via firewall
-
----
-
-## 🛠️ Install Fail2Ban on VPS
+## 4.4 Debug
 
 ```bash
-sudo apt update
+journalctl -u reverse-tunnel -f
+```
+
+---
+
+# 🔐 STEP 5 — Fail2Ban (VPS Protection)
+
+## Install
+
+```bash
 sudo apt install fail2ban -y
 ```
 
 ---
 
-## 📁 Basic configuration
-
-Create config:
+## Config
 
 ```bash
 sudo nano /etc/fail2ban/jail.local
 ```
-
-Add:
 
 ```ini
 [sshd]
@@ -260,18 +242,7 @@ findtime = 600
 
 ---
 
-## 🧩 Meaning of settings
-
-| Setting    | Meaning                    |
-| ---------- | -------------------------- |
-| `maxretry` | Attempts before ban        |
-| `findtime` | Time window (seconds)      |
-| `bantime`  | How long IP is blocked     |
-| `port`     | Your SSH port (important!) |
-
----
-
-## ▶️ Start Fail2Ban
+## Start
 
 ```bash
 sudo systemctl enable fail2ban
@@ -280,39 +251,42 @@ sudo systemctl start fail2ban
 
 ---
 
-## 🔍 Check status
+## Check
 
 ```bash
 sudo fail2ban-client status
-sudo fail2ban-client status sshd
 ```
 
 ---
 
-## 🧪 Example behavior
-
-If attacker tries:
-
-```
-password1 ❌
-password2 ❌
-password3 ❌
-password4 ❌
-password5 ❌
-```
-
-👉 IP gets banned automatically 🚫
-
----
-
-# 🧠 Security Summary (Critical)
+# 🧠 Security Summary (CRITICAL)
 
 ### MUST DO:
 
-* Use SSH keys only (`PasswordAuthentication no`)
-* Use non-standard port (like 5522 or similar high port)
-* Enable Fail2Ban
-* Restrict tunnel key
+* ✅ SSH keys only
+* ✅ Disable password login:
+
+```bash
+sudo nano /etc/ssh/sshd_config
+```
+
+```ini
+PasswordAuthentication no
+```
+
+---
+
+* ✅ Restart SSH:
+
+```bash
+sudo systemctl restart ssh
+```
+
+---
+
+* ✅ Use high random port (e.g. 5522, 49222)
+* ✅ Enable Fail2Ban
+* ✅ Restrict tunnel key
 
 ---
 
@@ -323,8 +297,4 @@ You now have:
 * 🌍 Public access to private Pi
 * 🔁 Auto-reconnecting tunnel
 * 🔐 Locked-down SSH
-* 🛡️ Active intrusion prevention
-
-
-
-
+* 🛡️ Brute-force protection
