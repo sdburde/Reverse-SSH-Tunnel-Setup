@@ -56,6 +56,22 @@ no-agent-forwarding,no-X11-forwarding,no-pty,permitopen="localhost:22" ssh-ed255
 
 ## 1.3 Allow external port
 
+### 📌 Port Guidelines (important)
+
+* You can use **any free TCP port**
+* Recommended range: **20000–65000**
+* Avoid common ports: `22, 80, 443, 8080`
+* Example choices:
+
+  * `5522` (your current one ✔)
+  * `22222`
+  * `49222` (better random)
+
+👉 Make sure:
+
+* Same port is used in **ALL steps below**
+* Port is not already in use (`ss -tlnp`)
+
 ```bash
 sudo ufw allow 5522/tcp
 ```
@@ -135,6 +151,13 @@ ssh -p 5522 pi_user@<VPS_IP>
 
 # 🔄 STEP 4 — Persistent Tunnel (autossh) on the Raspberry Pi 🍓
 
+## 📌 Important
+
+* This step runs **ONLY on Raspberry Pi**
+* Do NOT run on VPS
+
+---
+
 ## 4.1 Install autossh
 
 ```bash
@@ -189,23 +212,19 @@ sudo systemctl start reverse-tunnel
 
 ## 🧠 What is Fail2Ban?
 
-Fail2Ban is like a vigilant nightclub guard:
+Fail2Ban is like a silent firewall guard:
 
-* Watches logs (SSH login attempts)
-* Detects repeated failures
-* Bans IPs automatically using firewall rules
+* Monitors login attempts
+* Detects brute-force attacks
+* Blocks attacker IP automatically
 
 ---
 
 ## ⚙️ How it works
 
 1. Reads logs (e.g., `/var/log/auth.log`)
-2. Matches patterns like:
-
-   ```
-   Failed password for invalid user
-   ```
-3. If failures exceed threshold → blocks IP
+2. Detects repeated failures
+3. Blocks IP via firewall
 
 ---
 
@@ -291,7 +310,7 @@ password5 ❌
 ### MUST DO:
 
 * Use SSH keys only (`PasswordAuthentication no`)
-* Use non-standard port (like 5522)
+* Use non-standard port (like 5522 or similar high port)
 * Enable Fail2Ban
 * Restrict tunnel key
 
@@ -306,19 +325,6 @@ You now have:
 * 🔐 Locked-down SSH
 * 🛡️ Active intrusion prevention
 
----
 
-# ⚡ Optional Upgrade (Stealth Mode)
 
-Instead of exposing publicly:
-
-```bash
--R 127.0.0.1:5522:localhost:22
-```
-
-Then connect via:
-
-```bash
-ssh -J user@<VPS_IP> pi_user@localhost
-```
 
